@@ -1,79 +1,96 @@
-import java.util.List;
+/***
+ * Circle Breaker - a color explosion toy
+ *
+ * TODO:
+ * - get rid of bounding box
+ * - improve explosion chain efficiency
+ * - allow multiple "modes". e.g., 'negative SHRINK',
+ *
+ **/
+import procontroll.*;
+import net.java.games.input.*;
 
-// int DOTCOL = 255;
-int MAXDOTS = 1000;
+boolean DEBUG_MODE = false;
+int MAXDOTS = 850;
+
 float[] SPEED = new float[] {.5, 3};
 Dot[] dots = new Dot[MAXDOTS];
+
+int MAX_EXPLOSION_ROOTS = 30;     // explosion chains
+int NEXT_EXPLOSION_ROOT = 0;
 float MAXEXPL = 60;
-float SHRINK = 4; // each propagated explosion will be SHRINK pixels smaller
-List expls = new LinkedList();
-Explosion expl;
+float SHRINK = 3; // each propagated explosion will be SHRINK pixels smaller
+Explosion[] explosion_roots = new Explosion[MAX_EXPLOSION_ROOTS];
+
+boolean BOUNDING_BOX = false;
 float bboxx, bboxy, bboxh, bboxw;
 float bbox_ratio = 0.90;
 
-// Image 
+// Image
 final int MAX_COLORS = 10;
 int CURRENT_COLOR = 0;
 color[] COLORS = new color[MAX_COLORS];
+
+final int MAX_VALUED_COLORS = 20;
+color[] VALUED_COLORS = new color[MAX_VALUED_COLORS];
 PImage cur;
 
 // flower, flower-2, hillside, mountains (.jpg)
-String image = "flower.jpg";
+String image = "hillside.jpg";
 
 void setup() {
-  size(1250, 700, P2D);
+  if (DEBUG_MODE) {
+    size(400, 400, P2D);
+  } else {
+    size(1100, 700, P2D);
+  }
   frameRate(24);
   //smooth();
+
   for (int f=0;f<MAXDOTS;f++) {
     dots[f] = new Dot();
     dots[f].launch();
   }
- 
+
   PFont font;
-  font = loadFont("comic.vlw"); 
-  
-  textFont(font, 40); 
-  bboxh = height * bbox_ratio;
-  bboxw = width * bbox_ratio;
-  bboxx = (width - bboxw) / 2;
-  bboxy = (height - bboxh) / 2;
+  font = loadFont("comic.vlw");
+  textFont(font, 40);
+  // font = loadFont("LucidaSans-11.vlw");
+  // textFont(font, 11);
+  if (BOUNDING_BOX) {
+    bboxh = height * bbox_ratio;
+    bboxw = width * bbox_ratio;
+    bboxx = (width - bboxw) / 2;
+    bboxy = (height - bboxh) / 2;
+  }
 
   cur = loadImage(image);
-}
+  load_colors_by_value();
 
-/// Color cycles
-void load_colors() {
-  for (int n=0; n < MAX_COLORS; n++) { 
-    COLORS[n] = cur.get((int)random(cur.width), (int)random(cur.height));
-  }
-}
-
-color next_color() {
-  color out = COLORS[CURRENT_COLOR];
-  CURRENT_COLOR = (CURRENT_COLOR + 1) % MAX_COLORS;
-  if (CURRENT_COLOR == MAX_COLORS) {
-    CURRENT_COLOR = 0;
-  }
-  return out;
+  /// Startup control pad, attach handlers, etc.
+  initControlPad();
 }
 
 int MAXCHAIN = 0, NEWCHAIN = 0, MINEXPL = (int)MAXEXPL, MINCHAIN = 1000;
 boolean DONE = false;
 
 void draw() {
-  if (DONE) {
-    frameRate(10);
-    noStroke();
-    fill(255);
-    text("GAME OVER", width/2, height/2);
-    text("Max chain: " + Integer.toString(MAXCHAIN), width/2, height/2 + 10);
-    text("Max propagation: " + Float.toString((MAXEXPL-MINEXPL)/SHRINK), width/2, height/2 + 20);
-    fill(0, 10);
-    rect(0,0,width,height);
-    noLoop();
-  }
-  else 
-    background(0);
+  // if (DONE) {
+  //   frameRate(10);
+  //   noStroke();
+  //   fill(255);
+  //   text("GAME OVER", width/2, height/2);
+  //   text("Max chain: " + Integer.toString(MAXCHAIN), width/2, height/2 + 10);
+  //   text("Max propagation: " + Float.toString((MAXEXPL-MINEXPL)/SHRINK), width/2, height/2 + 20);
+  //   fill(0, 10);
+  //   rect(0,0,width,height);
+  //   noLoop();
+  // }
+  // else {
+  //   background(0);
+  // }
+
+  background(0);
 
   int dotcount = 0;
   for (int f=0;f<MAXDOTS;f++) {
@@ -89,35 +106,47 @@ void draw() {
       dotcount++;
     }
   }
-  
-  int s = expls.size();
-  if (s > 0) {
-    for (int x=s-1; x >= 0;x--) {
-      Explosion e = (Explosion)expls.get(x);
-      MINEXPL = MINEXPL < e.maxrad ? MINEXPL : (int)e.maxrad;
-      e.update();
-      e.drawme();
+
+  Explosion current_explosion;
+  boolean is_active;
+  for (int ers=0; ers < explosion_roots.length; ers++) {
+    current_explosion = explosion_roots[ers];
+    if (current_explosion != null) {
+      is_active = current_explosion.update();
+      if (is_active) {
+        current_explosion.drawme();
+      }
+      else {
+        current_explosion.destroy();
+        explosion_roots[ers] = null;
+      }
     }
   }
-  
+
   printScore();
-  
-  stroke(100);
-  noFill();
-  rect(bboxx, bboxy, bboxw, bboxh);
-  //if (!IsExploding())
-  //  StartExplosion(random(bboxx,bboxx + bboxw), random(bboxy,bboxy + bboxh));
+
+  if (BOUNDING_BOX) {
+    stroke(100);
+    noFill();
+    rect(bboxx, bboxy, bboxw, bboxh);
+  }
+
+  if (reticle != null) {
+    reticle.update();
+    reticle.drawme();
+  }
 }
 
 void printScore() {
-  
+
+  // Simple scores
   fill(0, 255, 153);
   text(MAXCHAIN, 40, height / 10);
-  text(MINCHAIN, width - 80, height / 10);
+  text(MINCHAIN, width - 90, height / 10);
   fill(200);
   text(NEWCHAIN, 40, height / 10 + 40);
-  
-  /*
+
+  /** Complex scores (only works with smaller font)
   text(MINCHAIN, 40, height - 10);
   text(MAXCHAIN, 0, height - 10);
 
@@ -130,133 +159,35 @@ void printScore() {
 }
 
 void StartExplosion(float x, float y) {
-  if (expls.size() == 0 || !IsExploding()) {
-    if (x>bboxx && x<bboxx + bboxw && y>bboxy && y < bboxy + bboxh) {
-      load_colors();
+  if (!BOUNDING_BOX || (x>bboxx && x<bboxx + bboxw && y>bboxy && y < bboxy + bboxh)) {
+    // load_colors(); // random color list
+    load_colors_by_value(); // sorted color list
 
-      if (NEWCHAIN > 1)
-        MINCHAIN = NEWCHAIN < MINCHAIN ? NEWCHAIN : MINCHAIN;
-      MAXCHAIN = NEWCHAIN > MAXCHAIN ? NEWCHAIN : MAXCHAIN;
+    // record scores
+    if (NEWCHAIN > 1) MINCHAIN = NEWCHAIN < MINCHAIN ? NEWCHAIN : MINCHAIN;
+    MAXCHAIN = NEWCHAIN > MAXCHAIN ? NEWCHAIN : MAXCHAIN;
 
-      NEWCHAIN = 1;
-      expls = new LinkedList();
-      expls.add(new Explosion(x, y, MAXEXPL));
-    }
+    // start explosion chain
+    NEWCHAIN = 1;
+    Explosion e = new Explosion(x, y, MAXEXPL, 0);
+    explosion_roots[NEXT_EXPLOSION_ROOT] = e;
+    NEXT_EXPLOSION_ROOT = (NEXT_EXPLOSION_ROOT + 1) % MAX_EXPLOSION_ROOTS;
   }
+
+  println("roots: " + count_active_roots());
 }
 
-boolean IsExploding() {
-  boolean finished = true;
-  for (int i=0;i<expls.size();i++) {
-    if (((Explosion)expls.get(i)).drawable) 
-       return true;
-  }  
-  return false;
+int count_active_roots() {
+  int count = 0;
+  for (int i=0; i < MAX_EXPLOSION_ROOTS; i++) {
+    if (explosion_roots[i] != null && explosion_roots[i].isActive()) {
+      count++;
+    }
+  }
+  return count;
 }
 
 void mousePressed() {
   StartExplosion(mouseX, mouseY);
-}
-
-class Explosion {
-  float x, y, l, r, t, b;
-  float rad = .5, maxrad;
-  List connections = new LinkedList();
-  boolean drawable = true;
-  color my_col; 
-  Explosion(float _x,float _y,float _maxrad) {
-    x = _x;
-    y = _y;
-    maxrad = _maxrad;
-    my_col = next_color();
-  }
-  
-  void update() {
-    if (!drawable) return;
-    rad += 3;
-    l = x - rad;
-    r = x + rad;
-    t = y - rad;
-    b = y + rad;        
-    if (rad > maxrad) {
-      drawable = false;
-      return;
-    }
-    
-    for (int f=0;f<MAXDOTS;f++) {
-      Dot d = dots[f];
-      if (d.launched) {
-        if (r < d.l || l > d.r || b < d.t || t > d.b) {// ||)
-          continue;
-        }
-          
-        float da = (x-d.x), db = (y-d.y), dc = d.rad+rad; 
-        if ((da * da + db * db) < (dc*dc)) {
-          NEWCHAIN += 1;
-          Explosion e = new Explosion(d.x, d.y, maxrad - SHRINK);
-          connections.add(e);
-          expls.add(e);
-          d.launched = false;
-        }
-      }
-    }
-  }
-  
-  void drawme() {
-    stroke(255);
-    //beginShape();
-    //vertex(x,y);
-    for (int i=0; i < connections.size(); i++) {
-      Explosion e = (Explosion)connections.get(i);
-      line(x, y, e.x, e.y); 
-      //vertex(e.x, e.y);
-    }  
-    //endShape();
-    noStroke();
-    noFill();
-    if (drawable) { 
-      fill(my_col, 120);
-      // fill(my_col, 40);
-      ellipse(x,y,rad*2,rad*2);  
-    }
-  }
-}
-
-class Dot {
-  float x,y,rad;
-  float l,r,t,b;
-  float vx,vy;
-  boolean launched;
-  Dot() { 
-   launched = false; 
-  }  
-  void launch() {
-    x = random(1,width-1);
-    y = random(0,1)>.5 ? 0 : height;
-    vx = random(SPEED[0], SPEED[1]) * (random(0,1)>.5 ? -1 : 1);
-    vy = random(SPEED[0], SPEED[1]);
-    launched = true;
-    rad = random(3, 18);
-  }
-  boolean update() {
-    x += vx;
-    y += vy;
-    l = x-rad;
-    r = x+rad;
-    t = y-rad;
-    b = y+rad;
-    if (x < 0 || x > width) {
-      vx *= -1;
-    }
-    else if (y < 0 || y > height) {
-      vy *= -1;
-    }
-    return true;
-  }  
-  void drawme() {
-    fill(200, 50);
-    noStroke();
-    ellipse(x,y,rad*2,rad*2);
-  }
 }
 
